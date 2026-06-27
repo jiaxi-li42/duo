@@ -36,6 +36,10 @@ yarn-error.log*
 # vercel
 .vercel
 
+# local libSQL dev database
+/scanbook.db
+/scanbook.db-*
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts
