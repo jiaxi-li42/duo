@@ -54,6 +54,15 @@ export function ensureSchema(): Promise<void> {
         position TEXT,
         updated_at INTEGER NOT NULL
       )`,
+      // Per-page rows for the side-by-side review workspace. layout_image is a
+      // downscaled base64 data URI of the boxed layout viz, cleared on approve.
+      `CREATE TABLE IF NOT EXISTS pages (
+        book_id TEXT NOT NULL,
+        idx INTEGER NOT NULL,
+        markdown TEXT,
+        layout_image TEXT,
+        PRIMARY KEY (book_id, idx)
+      )`,
     ],
     "write",
   ).then(() => {});
@@ -81,14 +90,14 @@ export async function createBook(input: {
   id: string;
   title: string;
   author?: string | null;
-  source_pdf_url: string;
+  source_pdf_url?: string | null; // null for books assembled in-app (e.g. bilingual merges)
 }): Promise<void> {
   await ensureSchema();
   const now = Date.now();
   await db.execute({
     sql: `INSERT INTO books (id, title, author, status, source_pdf_url, created_at, updated_at)
           VALUES (?, ?, ?, 'queued', ?, ?, ?)`,
-    args: [input.id, input.title, input.author ?? null, input.source_pdf_url, now, now],
+    args: [input.id, input.title, input.author ?? null, input.source_pdf_url ?? null, now, now],
   });
 }
 
@@ -134,5 +143,91 @@ export async function setProgress(bookId: string, position: string): Promise<voi
           VALUES (?, ?, ?)
           ON CONFLICT(book_id) DO UPDATE SET position = excluded.position, updated_at = excluded.updated_at`,
     args: [bookId, position, Date.now()],
+  });
+}
+
+export async function deleteBook(id: string): Promise<void> {
+  await ensureSchema();
+  await db.batch(
+    [
+      { sql: "DELETE FROM books WHERE id = ?", args: [id] },
+      { sql: "DELETE FROM reading_progress WHERE book_id = ?", args: [id] },
+      { sql: "DELETE FROM pages WHERE book_id = ?", args: [id] },
+    ],
+    "write",
+  );
+}
+
+// --- Per-page review data ---
+
+export interface PageMeta {
+  idx: number;
+  hasImage: boolean;
+}
+
+// Light list for navigation: page indices + whether a layout image exists.
+// Falls back to a single synthetic page for books converted before paging.
+export async function listPages(book: Book): Promise<PageMeta[]> {
+  await ensureSchema();
+  const { rows } = await db.execute({
+    sql: "SELECT idx, (layout_image IS NOT NULL) AS has_image FROM pages WHERE book_id = ? ORDER BY idx",
+    args: [book.id],
+  });
+  if (rows.length === 0) {
+    return book.content != null ? [{ idx: 0, hasImage: false }] : [];
+  }
+  return rows.map((r) => ({ idx: Number(r.idx), hasImage: !!Number(r.has_image) }));
+}
+
+export async function getPage(
+  book: Book,
+  idx: number,
+): Promise<{ markdown: string; image: string | null }> {
+  await ensureSchema();
+  const { rows } = await db.execute({
+    sql: "SELECT markdown, layout_image FROM pages WHERE book_id = ? AND idx = ?",
+    args: [book.id, idx],
+  });
+  if (rows.length === 0) {
+    // Legacy book with no page rows: serve whole content as page 0.
+    return { markdown: idx === 0 ? (book.content ?? "") : "", image: null };
+  }
+  return {
+    markdown: (rows[0].markdown as string | null) ?? "",
+    image: (rows[0].layout_image as string | null) ?? null,
+  };
+}
+
+export async function savePage(
+  bookId: string,
+  idx: number,
+  markdown: string,
+): Promise<void> {
+  await ensureSchema();
+  await db.execute({
+    sql: `INSERT INTO pages (book_id, idx, markdown) VALUES (?, ?, ?)
+          ON CONFLICT(book_id, idx) DO UPDATE SET markdown = excluded.markdown`,
+    args: [bookId, idx, markdown],
+  });
+}
+
+// Join edited pages into the reader's single markdown field, drop the now-unneeded
+// layout images, and mark the book ready.
+export async function approveBook(bookId: string): Promise<void> {
+  await ensureSchema();
+  const { rows } = await db.execute({
+    sql: "SELECT markdown FROM pages WHERE book_id = ? ORDER BY idx",
+    args: [bookId],
+  });
+  const fields: Partial<Book> = { status: "ready" };
+  if (rows.length > 0) {
+    fields.content = rows
+      .map((r) => (r.markdown as string | null) ?? "")
+      .join("\n\n---\n\n");
+  }
+  await updateBook(bookId, fields);
+  await db.execute({
+    sql: "UPDATE pages SET layout_image = NULL WHERE book_id = ?",
+    args: [bookId],
   });
 }

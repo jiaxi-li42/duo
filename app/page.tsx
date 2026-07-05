@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { listBooks, type Book, type BookStatus } from "@/lib/db";
 import ShelfRefresher from "./shelf-refresher";
+import BookActions from "./book-actions";
+import CombineForm from "./combine-form";
 
 export const dynamic = "force-dynamic";
 
@@ -64,17 +66,38 @@ function Card({ book }: { book: Book }) {
     </>
   );
 
-  return href ? (
-    <Link href={href} className="block transition hover:opacity-90">
-      {inner}
-    </Link>
-  ) : (
-    <div
-      className={book.status === "error" ? "" : "opacity-80"}
-      title={book.error ?? undefined}
-    >
-      {inner}
+  return (
+    <div>
+      {href ? (
+        <Link href={href} className="block transition hover:opacity-90">
+          {inner}
+        </Link>
+      ) : (
+        <div
+          className={book.status === "error" ? "" : "opacity-80"}
+          title={book.error ?? undefined}
+        >
+          {inner}
+        </div>
+      )}
+      <BookActions id={book.id} status={book.status} />
     </div>
+  );
+}
+
+function Section({ title, books }: { title: string; books: Book[] }) {
+  return (
+    <section className="mb-8">
+      <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-500">
+        {title}{" "}
+        <span className="font-normal normal-case">({books.length})</span>
+      </h2>
+      <div className="grid grid-cols-2 gap-6 sm:grid-cols-3 md:grid-cols-4">
+        {books.map((book) => (
+          <Card key={book.id} book={book} />
+        ))}
+      </div>
+    </section>
   );
 }
 
@@ -83,6 +106,10 @@ export default async function Bookshelf() {
   const busy = books.some(
     (b) => b.status === "queued" || b.status === "processing",
   );
+  // Reading = finished books; everything else (queued, converting, review, error) needs attention.
+  const reading = books.filter((b) => b.status === "ready");
+  const needsReview = books.filter((b) => b.status !== "ready");
+  const ready = reading.map((b) => ({ id: b.id, title: b.title }));
 
   if (books.length === 0) {
     return (
@@ -104,12 +131,14 @@ export default async function Bookshelf() {
   return (
     <>
       {busy && <ShelfRefresher />}
-      <h1 className="mb-6 text-2xl font-semibold">Bookshelf</h1>
-      <div className="grid grid-cols-2 gap-6 sm:grid-cols-3 md:grid-cols-4">
-        {books.map((book) => (
-          <Card key={book.id} book={book} />
-        ))}
+      <div className="mb-6 flex items-center justify-between gap-4">
+        <h1 className="text-2xl font-semibold">Bookshelf</h1>
+        {ready.length >= 2 && <CombineForm books={ready} />}
       </div>
+      {reading.length > 0 && <Section title="Reading" books={reading} />}
+      {needsReview.length > 0 && (
+        <Section title="Needs review" books={needsReview} />
+      )}
     </>
   );
 }

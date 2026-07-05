@@ -1,4 +1,4 @@
-# Scanbook
+# Duo
 
 Turn scanned PDF books into readable digital ones. Upload a scanned PDF →
 [dots.mocr](https://huggingface.co/rednote-hilab/dots.mocr) OCRs it to markdown

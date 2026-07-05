@@ -1,0 +1,37 @@
+/* Layout for the review page's Tiptap editor.
+ *
+ * We deliberately do NOT import the Simple Editor template's simple-editor.scss:
+ * it assumes it owns the whole viewport — a width:100vw / height:100vh wrapper
+ * that breaks out of the app's max-w-5xl <main> (causing huge side whitespace)
+ * and turns into an inner scrollbox that traps the sticky toolbar — plus global
+ * body/html/font overrides. This makes the editor flow inside the review page
+ * instead: full available width, page-level scroll, toolbar pinned to the top. */
+
+.simple-editor-wrapper {
+  width: 100%;
+}
+
+.simple-editor-content {
+  width: 100%;
+}
+
+.simple-editor-content .tiptap.ProseMirror.simple-editor {
+  padding: 1.5rem clamp(1rem, 3vw, 2rem) 5rem;
+  min-height: 60vh;
+}
+
+.simple-editor-content .tiptap.ProseMirror.simple-editor:focus {
+  outline: none;
+}
+
+/* Keep the formatting bar pinned to the top while scrolling a long page.
+ * Only on desktop: below 768px the template floats the toolbar near the
+ * on-screen keyboard (bottom: calc(...)), so leave that mode alone. */
+@media (min-width: 768px) {
+  .tiptap-toolbar {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    background: var(--background);
+  }
+}

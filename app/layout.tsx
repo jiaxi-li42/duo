@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Scanbook",
+  title: "Duo",
   description: "Turn scanned PDF books into readable digital ones.",
 };
 
@@ -32,7 +32,7 @@ export default function RootLayout({
         <header className="border-b border-black/10 dark:border-white/15">
           <nav className="mx-auto flex max-w-5xl items-center justify-between px-6 py-4">
             <Link href="/" className="text-lg font-semibold tracking-tight">
-              📚 Scanbook
+              📚 Duo
             </Link>
             <Link
               href="/upload"

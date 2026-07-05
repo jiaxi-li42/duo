@@ -1,8 +1,9 @@
 import { handleUpload, type HandleUploadBody } from "@vercel/blob/client";
 import { NextResponse } from "next/server";
 
-// Mints a short-lived token so the browser can upload the PDF directly to
-// Vercel Blob, bypassing the ~4.5MB serverless request-body limit.
+// Mints a short-lived token so the browser can upload the book file directly to
+// Vercel Blob, bypassing the ~4.5MB serverless request-body limit. Non-PDF
+// formats (epub/docx/html/mobi/azw3) are uploaded as octet-stream.
 export async function POST(request: Request): Promise<NextResponse> {
   const body = (await request.json()) as HandleUploadBody;
   try {
@@ -10,7 +11,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       body,
       request,
       onBeforeGenerateToken: async () => ({
-        allowedContentTypes: ["application/pdf"],
+        allowedContentTypes: ["application/pdf", "application/octet-stream"],
         maximumSizeInBytes: 1024 * 1024 * 1024, // 1 GB
         addRandomSuffix: true,
       }),

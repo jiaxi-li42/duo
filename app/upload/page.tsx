@@ -6,6 +6,13 @@ import { upload } from "@vercel/blob/client";
 
 type Phase = "idle" | "uploading" | "creating" | "error";
 
+const ACCEPT = ".pdf,.epub,.docx,.html,.htm,.mobi,.azw,.azw3";
+const EXT_RE = /\.(pdf|epub|docx|html?|mobi|azw3?)$/i;
+function extOf(name: string): string {
+  const e = (name.match(EXT_RE)?.[1] ?? "").toLowerCase();
+  return e === "htm" ? "html" : e;
+}
+
 export default function UploadPage() {
   const router = useRouter();
   const [file, setFile] = useState<File | null>(null);
@@ -18,19 +25,25 @@ export default function UploadPage() {
   function pickFile(f: File | null) {
     if (!f) return;
     setFile(f);
-    if (!title) setTitle(f.name.replace(/\.pdf$/i, ""));
+    if (!title) setTitle(f.name.replace(EXT_RE, ""));
   }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!file || !title.trim()) return;
+    const ext = extOf(file.name);
+    if (!ext) {
+      setPhase("error");
+      setError("Unsupported file type. Use PDF, EPUB, DOCX, HTML, MOBI, or AZW3.");
+      return;
+    }
     setError(null);
     try {
       setPhase("uploading");
       const blob = await upload(file.name, file, {
         access: "public",
         handleUploadUrl: "/api/upload-token",
-        contentType: "application/pdf",
+        contentType: ext === "pdf" ? "application/pdf" : "application/octet-stream",
         multipart: true,
         onUploadProgress: (p) => setProgress(Math.round(p.percentage)),
       });
@@ -39,7 +52,12 @@ export default function UploadPage() {
       const res = await fetch("/api/books", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title: title.trim(), author: author.trim(), pdfUrl: blob.url }),
+        body: JSON.stringify({
+          title: title.trim(),
+          author: author.trim(),
+          fileUrl: blob.url,
+          ext,
+        }),
       });
       if (!res.ok) throw new Error((await res.json()).error ?? "Failed to create book");
 
@@ -54,7 +72,7 @@ export default function UploadPage() {
 
   return (
     <div className="mx-auto max-w-lg">
-      <h1 className="mb-6 text-2xl font-semibold">Upload a scanned book</h1>
+      <h1 className="mb-6 text-2xl font-semibold">Upload a book</h1>
       <form onSubmit={handleSubmit} className="flex flex-col gap-5">
         <label
           className="flex cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed border-black/15 px-6 py-10 text-center hover:border-black/30 dark:border-white/20 dark:hover:border-white/40"
@@ -66,7 +84,7 @@ export default function UploadPage() {
         >
           <input
             type="file"
-            accept="application/pdf"
+            accept={ACCEPT}
             className="hidden"
             onChange={(e) => pickFile(e.target.files?.[0] ?? null)}
           />
@@ -74,7 +92,8 @@ export default function UploadPage() {
             <span className="text-sm font-medium">{file.name}</span>
           ) : (
             <span className="text-sm text-zinc-500">
-              Drop a PDF here, or click to choose
+              Drop a PDF, EPUB, DOCX, HTML, or Kindle file here, or click to
+              choose
             </span>
           )}
         </label>
