@@ -179,6 +179,18 @@ export async function listPages(book: Book): Promise<PageMeta[]> {
   return rows.map((r) => ({ idx: Number(r.idx), hasImage: !!Number(r.has_image) }));
 }
 
+// All page markdowns in order, for the reader. One string per section.
+// Legacy books (no page rows) fall back to the single joined `content` field.
+export async function getPageMarkdowns(book: Book): Promise<string[]> {
+  await ensureSchema();
+  const { rows } = await db.execute({
+    sql: "SELECT markdown FROM pages WHERE book_id = ? ORDER BY idx",
+    args: [book.id],
+  });
+  if (rows.length === 0) return book.content != null ? [book.content] : [];
+  return rows.map((r) => (r.markdown as string | null) ?? "");
+}
+
 export async function getPage(
   book: Book,
   idx: number,
