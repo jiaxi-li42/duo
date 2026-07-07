@@ -9,7 +9,13 @@ import rehypeRaw from "rehype-raw";
 import rehypeSlug from "rehype-slug";
 import rehypeKatex from "rehype-katex";
 import rehypeStringify from "rehype-stringify";
-import { getBook, getProgress, getPageMarkdowns } from "@/lib/db";
+import {
+  getBook,
+  getProgress,
+  getPageMarkdowns,
+  listHighlights,
+  type Book,
+} from "@/lib/db";
 import Reader, { type TocItem } from "./reader";
 
 export const dynamic = "force-dynamic";
@@ -53,20 +59,48 @@ function extractHeadings(html: string, index: number): TocItem[] {
   return out;
 }
 
+// Rendering every section's markdown → HTML through the unified pipeline is the
+// costly part of a reader load, and it only changes when the book does — so
+// memoize the result per (id, updated_at). ponytail: in-process LRU capped at 8;
+// a warm server serves re-opens for free, a restart just recomputes once. Move to
+// unstable_cache / precompute-at-approve only if it needs to survive restarts.
+type Rendered = { sections: string[]; toc: TocItem[] };
+const RENDER_CACHE_MAX = 8;
+const renderCache = new Map<string, Rendered>();
+
+async function renderBook(book: Book): Promise<Rendered> {
+  const key = `${book.id}:${book.updated_at}`;
+  const hit = renderCache.get(key);
+  if (hit) {
+    renderCache.delete(key);
+    renderCache.set(key, hit); // refresh recency
+    return hit;
+  }
+  const markdowns = await getPageMarkdowns(book);
+  const sections = (markdowns.length ? markdowns : ["*No content.*"]).map(
+    renderFragment,
+  );
+  const value: Rendered = { sections, toc: sections.flatMap(extractHeadings) };
+  renderCache.set(key, value);
+  if (renderCache.size > RENDER_CACHE_MAX) {
+    const oldest = renderCache.keys().next().value;
+    if (oldest) renderCache.delete(oldest);
+  }
+  return value;
+}
+
 export default async function ReadPage(props: PageProps<"/book/[id]/read">) {
   const { id } = await props.params;
   const book = await getBook(id);
   if (!book) notFound();
 
-  const markdowns = await getPageMarkdowns(book);
-  const sections = (markdowns.length ? markdowns : ["*No content.*"]).map(
-    renderFragment,
-  );
-  const toc = sections.flatMap(extractHeadings);
+  const { sections, toc } = await renderBook(book);
 
   // Progress is now a CFI string; ignore legacy numeric scroll positions.
   const saved = await getProgress(id);
   const initialCFI = saved?.startsWith("epubcfi(") ? saved : null;
+
+  const highlights = await listHighlights(id);
 
   return (
     <div>
@@ -85,7 +119,13 @@ export default async function ReadPage(props: PageProps<"/book/[id]/read">) {
           Edit
         </Link>
       </div>
-      <Reader id={book.id} sections={sections} toc={toc} initialCFI={initialCFI} />
+      <Reader
+        id={book.id}
+        sections={sections}
+        toc={toc}
+        initialCFI={initialCFI}
+        initialHighlights={highlights}
+      />
     </div>
   );
 }

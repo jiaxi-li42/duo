@@ -63,6 +63,16 @@ export function ensureSchema(): Promise<void> {
         layout_image TEXT,
         PRIMARY KEY (book_id, idx)
       )`,
+      // Reader highlights. cfi is foliate's EpubCFI for the selected range and
+      // doubles as the row key (unique per selection); text is the excerpt.
+      `CREATE TABLE IF NOT EXISTS highlights (
+        book_id TEXT NOT NULL,
+        cfi TEXT NOT NULL,
+        color TEXT NOT NULL,
+        text TEXT,
+        created_at INTEGER NOT NULL,
+        PRIMARY KEY (book_id, cfi)
+      )`,
     ],
     "write",
   ).then(() => {});
@@ -153,9 +163,54 @@ export async function deleteBook(id: string): Promise<void> {
       { sql: "DELETE FROM books WHERE id = ?", args: [id] },
       { sql: "DELETE FROM reading_progress WHERE book_id = ?", args: [id] },
       { sql: "DELETE FROM pages WHERE book_id = ?", args: [id] },
+      { sql: "DELETE FROM highlights WHERE book_id = ?", args: [id] },
     ],
     "write",
   );
+}
+
+// --- Reader highlights ---
+
+export interface Highlight {
+  cfi: string;
+  color: string;
+  text: string;
+}
+
+export async function listHighlights(bookId: string): Promise<Highlight[]> {
+  await ensureSchema();
+  const { rows } = await db.execute({
+    sql: "SELECT cfi, color, text FROM highlights WHERE book_id = ? ORDER BY created_at",
+    args: [bookId],
+  });
+  return rows.map((r) => ({
+    cfi: r.cfi as string,
+    color: r.color as string,
+    text: (r.text as string | null) ?? "",
+  }));
+}
+
+export async function addHighlight(
+  bookId: string,
+  cfi: string,
+  color: string,
+  text: string,
+): Promise<void> {
+  await ensureSchema();
+  await db.execute({
+    sql: `INSERT INTO highlights (book_id, cfi, color, text, created_at)
+          VALUES (?, ?, ?, ?, ?)
+          ON CONFLICT(book_id, cfi) DO UPDATE SET color = excluded.color`,
+    args: [bookId, cfi, color, text, Date.now()],
+  });
+}
+
+export async function deleteHighlight(bookId: string, cfi: string): Promise<void> {
+  await ensureSchema();
+  await db.execute({
+    sql: "DELETE FROM highlights WHERE book_id = ? AND cfi = ?",
+    args: [bookId, cfi],
+  });
 }
 
 // --- Per-page review data ---

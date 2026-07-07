@@ -2,6 +2,15 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 type Option = { id: string; title: string };
 
@@ -10,18 +19,16 @@ export default function CombineForm({ books }: { books: Option[] }) {
   const router = useRouter();
   const [en, setEn] = useState("");
   const [zh, setZh] = useState("");
-  const [busy, setBusy] = useState(false);
   const [open, setOpen] = useState(false);
+  const invalid = !en || !zh || en === zh;
 
   async function submit() {
-    if (!en || !zh || en === zh || busy) return;
-    setBusy(true);
+    if (invalid) return;
     await fetch("/api/books/combine", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ enId: en, zhId: zh }),
     });
-    setBusy(false);
     setOpen(false);
     setEn("");
     setZh("");
@@ -30,45 +37,41 @@ export default function CombineForm({ books }: { books: Option[] }) {
 
   if (!open) {
     return (
-      <button
-        onClick={() => setOpen(true)}
-        className="rounded-md border border-black/15 px-3 py-1.5 text-sm font-medium hover:bg-black/5 dark:border-white/20 dark:hover:bg-white/10"
-      >
+      <Button variant="secondary" onClick={() => setOpen(true)}>
         Combine bilingual
-      </button>
+      </Button>
     );
   }
 
-  const select =
-    "rounded border border-black/15 bg-transparent px-2 py-1 text-sm dark:border-white/20";
+  const pick = (
+    value: string,
+    onValueChange: (v: string) => void,
+    placeholder: string,
+  ) => (
+    <Select value={value} onValueChange={(v) => onValueChange(v ?? "")}>
+      <SelectTrigger className="w-44">
+        <SelectValue placeholder={placeholder} />
+      </SelectTrigger>
+      <SelectContent>
+        {books.map((b) => (
+          <SelectItem key={b.id} value={b.id}>
+            {b.title}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+
   return (
-    <div className="flex flex-wrap items-center gap-2 rounded-md border border-black/10 p-3 dark:border-white/15">
-      <select value={en} onChange={(e) => setEn(e.target.value)} className={select}>
-        <option value="">English book…</option>
-        {books.map((b) => (
-          <option key={b.id} value={b.id}>{b.title}</option>
-        ))}
-      </select>
-      <span className="text-sm text-zinc-500">+</span>
-      <select value={zh} onChange={(e) => setZh(e.target.value)} className={select}>
-        <option value="">中文书…</option>
-        {books.map((b) => (
-          <option key={b.id} value={b.id}>{b.title}</option>
-        ))}
-      </select>
-      <button
-        onClick={submit}
-        disabled={!en || !zh || en === zh || busy}
-        className="rounded bg-foreground px-3 py-1 text-sm font-medium text-background hover:opacity-90 disabled:opacity-40"
-      >
-        {busy ? "Starting…" : "Combine"}
-      </button>
-      <button
-        onClick={() => setOpen(false)}
-        className="rounded px-2 py-1 text-sm text-zinc-500 hover:underline"
-      >
+    <Card className="flex-row flex-wrap items-center gap-2 p-3">
+      {pick(en, setEn, "English book…")}
+      {pick(zh, setZh, "中文书…")}
+      <Button disabled={invalid} onClick={submit}>
+        Combine
+      </Button>
+      <Button variant="ghost" onClick={() => setOpen(false)}>
         Cancel
-      </button>
-    </div>
+      </Button>
+    </Card>
   );
 }

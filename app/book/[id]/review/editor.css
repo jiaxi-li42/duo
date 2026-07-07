@@ -1,11 +1,8 @@
 /* Layout for the review page's Tiptap editor.
  *
- * We deliberately do NOT import the Simple Editor template's simple-editor.scss:
- * it assumes it owns the whole viewport — a width:100vw / height:100vh wrapper
- * that breaks out of the app's max-w-5xl <main> (causing huge side whitespace)
- * and turns into an inner scrollbox that traps the sticky toolbar — plus global
- * body/html/font overrides. This makes the editor flow inside the review page
- * instead: full available width, page-level scroll, toolbar pinned to the top. */
+ * The editor flows inside the app's max-w-5xl <main> rather than owning the
+ * viewport: full available width, page-level scroll, and a toolbar pinned to the
+ * top — instead of a 100vw/100vh wrapper with global body/html/font overrides. */
 
 .simple-editor-wrapper {
   width: 100%;

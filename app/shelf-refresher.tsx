@@ -8,7 +8,10 @@ import { useRouter } from "next/navigation";
 export default function ShelfRefresher() {
   const router = useRouter();
   useEffect(() => {
-    const id = setInterval(() => router.refresh(), 3000);
+    // Skip refetches while the tab is hidden — no point polling in the background.
+    const id = setInterval(() => {
+      if (!document.hidden) router.refresh();
+    }, 3000);
     return () => clearInterval(id);
   }, [router]);
   return null;

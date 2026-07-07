@@ -360,6 +360,10 @@ class View {
         }
     }
     expand() {
+        // ponytail: teardown race — the ResizeObserver/fonts.ready callbacks fire
+        // async and can outlive the iframe (e.g. navigating away), leaving
+        // this.document (iframe.contentDocument) null. Bail instead of crashing.
+        if (!this.document) return
         const { documentElement } = this.document
         if (this.#column) {
             const side = this.#vertical ? 'height' : 'width'

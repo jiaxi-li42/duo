@@ -35,7 +35,6 @@ import {
 } from "@/components/tiptap-ui-primitive/toolbar"
 
 // --- Tiptap Node ---
-import { ImageUploadNode } from "@/components/tiptap-node/image-upload-node/image-upload-node-extension"
 import { HorizontalRule } from "@/components/tiptap-node/horizontal-rule-node/horizontal-rule-node-extension"
 import "@/components/tiptap-node/blockquote-node/blockquote-node.scss"
 import "@/components/tiptap-node/code-block-node/code-block-node.scss"
@@ -47,7 +46,6 @@ import "@/components/tiptap-node/paragraph-node/paragraph-node.scss"
 
 // --- Tiptap UI ---
 import { HeadingDropdownMenu } from "@/components/tiptap-ui/heading-dropdown-menu"
-import { ImageUploadButton } from "@/components/tiptap-ui/image-upload-button"
 import { ListDropdownMenu } from "@/components/tiptap-ui/list-dropdown-menu"
 import { BlockquoteButton } from "@/components/tiptap-ui/blockquote-button"
 import { CodeBlockButton } from "@/components/tiptap-ui/code-block-button"
@@ -75,17 +73,11 @@ import { useIsBreakpoint } from "@/hooks/use-is-breakpoint"
 import { useWindowSize } from "@/hooks/use-window-size"
 import { useCursorVisibility } from "@/hooks/use-cursor-visibility"
 
-// --- Components ---
-import { ThemeToggle } from "@/components/tiptap-templates/simple/theme-toggle"
-
-// --- Lib ---
-import { handleImageUpload, MAX_FILE_SIZE } from "@/lib/tiptap-utils"
-
 // --- Styles ---
 import "@/styles/_variables.scss"
 import "@/styles/_keyframe-animations.scss"
-// NOTE: we intentionally skip the template's simple-editor.scss (full-viewport
-// layout + global body/html/font hijack) and use our own embedded layout below.
+// Our own embedded layout — the editor flows inside the review page rather than
+// owning the full viewport (see editor.css).
 import "./editor.css"
 
 const MainToolbarContent = ({
@@ -150,19 +142,7 @@ const MainToolbarContent = ({
         <TextAlignButton align="justify" />
       </ToolbarGroup>
 
-      <ToolbarSeparator />
-
-      <ToolbarGroup>
-        <ImageUploadButton text="Add" />
-      </ToolbarGroup>
-
       <Spacer />
-
-      {isMobile && <ToolbarSeparator />}
-
-      <ToolbarGroup>
-        <ThemeToggle />
-      </ToolbarGroup>
     </>
   )
 }
@@ -209,6 +189,7 @@ export default function PageEditor({
     "main"
   )
   const toolbarRef = useRef<HTMLDivElement>(null)
+  const [toolbarHeight, setToolbarHeight] = useState(0)
 
   const editor = useEditor({
     immediatelyRender: false,
@@ -243,13 +224,6 @@ export default function PageEditor({
       TableKit,
       InlineMath,
       BlockMath,
-      ImageUploadNode.configure({
-        accept: "image/*",
-        maxSize: MAX_FILE_SIZE,
-        limit: 3,
-        upload: handleImageUpload,
-        onError: (error) => console.error("Upload failed:", error),
-      }),
     ],
     // Parse the page's stored markdown straight into the editor.
     content: markdown,
@@ -263,16 +237,25 @@ export default function PageEditor({
       editor ? editor.getMarkdown() : markdown
   }, [editor, markdown, getMarkdownRef])
 
-  const rect = useCursorVisibility({
-    editor,
-    overlayHeight: toolbarRef.current?.getBoundingClientRect().height ?? 0,
-  })
-
+  // Track the toolbar height in state instead of reading the ref during render.
+  // The ResizeObserver's initial callback seeds it (no synchronous setState here).
   useEffect(() => {
-    if (!isMobile && mobileView !== "main") {
-      setMobileView("main")
-    }
-  }, [isMobile, mobileView])
+    const el = toolbarRef.current
+    if (!el) return
+    const ro = new ResizeObserver(() =>
+      setToolbarHeight(el.getBoundingClientRect().height),
+    )
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+
+  const rect = useCursorVisibility({ editor, overlayHeight: toolbarHeight })
+
+  // Reset the mobile sub-view when leaving mobile — adjusted during render
+  // (guarded so it converges) rather than in an effect.
+  if (!isMobile && mobileView !== "main") {
+    setMobileView("main")
+  }
 
   return (
     <div className="simple-editor-wrapper">

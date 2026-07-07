@@ -3,6 +3,11 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { upload } from "@vercel/blob/client";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Progress } from "@/components/ui/progress";
+import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
 
 type Phase = "idle" | "uploading" | "creating" | "error";
 
@@ -23,9 +28,8 @@ export default function UploadPage() {
   const [error, setError] = useState<string | null>(null);
 
   function pickFile(f: File | null) {
-    if (!f) return;
     setFile(f);
-    if (!title) setTitle(f.name.replace(EXT_RE, ""));
+    if (f && !title) setTitle(f.name.replace(EXT_RE, ""));
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -69,74 +73,66 @@ export default function UploadPage() {
   }
 
   const busy = phase === "uploading" || phase === "creating";
+  const label =
+    phase === "uploading"
+      ? `Uploading… ${progress}%`
+      : phase === "creating"
+        ? "Starting conversion…"
+        : "Upload & convert";
 
   return (
     <div className="mx-auto max-w-lg">
-      <h1 className="mb-6 text-2xl font-semibold">Upload a book</h1>
       <form onSubmit={handleSubmit} className="flex flex-col gap-5">
-        <label
-          className="flex cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed border-black/15 px-6 py-10 text-center hover:border-black/30 dark:border-white/20 dark:hover:border-white/40"
-          onDragOver={(e) => e.preventDefault()}
-          onDrop={(e) => {
-            e.preventDefault();
-            pickFile(e.dataTransfer.files[0] ?? null);
-          }}
-        >
-          <input
+        <h2 className="text-2xl font-semibold">Upload a book</h2>
+
+        <div className="flex flex-col gap-2">
+          <Label htmlFor="file">Book file</Label>
+          {/* ponytail: native file input (styled by shadcn Input) — dropped the
+              Astryx dropzone; a picker is enough for single-user upload. */}
+          <Input
+            id="file"
             type="file"
             accept={ACCEPT}
-            className="hidden"
             onChange={(e) => pickFile(e.target.files?.[0] ?? null)}
           />
-          {file ? (
-            <span className="text-sm font-medium">{file.name}</span>
-          ) : (
-            <span className="text-sm text-zinc-500">
-              Drop a PDF, EPUB, DOCX, HTML, or Kindle file here, or click to
-              choose
-            </span>
-          )}
-        </label>
+          <p className="text-xs text-muted-foreground">
+            PDF, EPUB, DOCX, HTML, or Kindle (MOBI/AZW3)
+          </p>
+        </div>
 
-        <div>
-          <label className="mb-1 block text-sm font-medium">Title</label>
-          <input
+        <div className="flex flex-col gap-2">
+          <Label htmlFor="title">Title</Label>
+          <Input
+            id="title"
             value={title}
             onChange={(e) => setTitle(e.target.value)}
             required
-            className="w-full rounded-md border border-black/15 bg-transparent px-3 py-2 text-sm dark:border-white/20"
           />
         </div>
 
-        <div>
-          <label className="mb-1 block text-sm font-medium">
-            Author <span className="text-zinc-400">(optional)</span>
-          </label>
-          <input
+        <div className="flex flex-col gap-2">
+          <Label htmlFor="author">
+            Author <span className="text-muted-foreground">(optional)</span>
+          </Label>
+          <Input
+            id="author"
             value={author}
             onChange={(e) => setAuthor(e.target.value)}
-            className="w-full rounded-md border border-black/15 bg-transparent px-3 py-2 text-sm dark:border-white/20"
           />
         </div>
 
-        {phase === "uploading" && (
-          <div className="h-2 overflow-hidden rounded bg-black/10 dark:bg-white/15">
-            <div className="h-full bg-blue-500 transition-all" style={{ width: `${progress}%` }} />
-          </div>
-        )}
-        {error && <p className="text-sm text-red-600">{error}</p>}
+        {phase === "uploading" && <Progress value={progress} />}
 
-        <button
-          type="submit"
-          disabled={!file || !title.trim() || busy}
-          className="rounded-md bg-foreground px-4 py-2 text-sm font-medium text-background hover:opacity-90 disabled:opacity-50"
-        >
-          {phase === "uploading"
-            ? `Uploading… ${progress}%`
-            : phase === "creating"
-              ? "Starting conversion…"
-              : "Upload & convert"}
-        </button>
+        {error && (
+          <Alert variant="destructive">
+            <AlertTitle>Upload failed</AlertTitle>
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        )}
+
+        <Button type="submit" disabled={!file || !title.trim() || busy}>
+          {label}
+        </Button>
       </form>
     </div>
   );

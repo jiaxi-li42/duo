@@ -1,8 +1,71 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import {
+  ChevronLeft,
+  ChevronRight,
+  Menu,
+  Minus,
+  Plus,
+  Settings2,
+  Trash2,
+} from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Slider } from "@/components/ui/slider";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import { cn } from "@/lib/utils";
 
 export type TocItem = { index: number; id: string; text: string; level: number };
+export type Highlight = { cfi: string; color: string; text?: string };
+
+// Highlight swatches — bright enough to read over text on both light and dark.
+const HIGHLIGHT_COLORS = ["#ffd54a", "#8ce99a", "#74c0fc", "#faa2c1"];
+
+// Draw callback handed to foliate's overlay (see overlayer.js / view.js
+// draw-annotation). Mirrors Overlayer.highlight: a <g> of translucent <rect>s,
+// one per client rect of the selection range. Built with the top document like
+// overlayer.js does; foliate adopts it into the section iframe on attach.
+const SVGNS = "http://www.w3.org/2000/svg";
+function drawHighlight(
+  rects: Iterable<DOMRect>,
+  options: { color?: string } = {},
+) {
+  const g = document.createElementNS(SVGNS, "g");
+  g.setAttribute("fill", options.color ?? HIGHLIGHT_COLORS[0]);
+  g.style.opacity = "var(--overlayer-highlight-opacity, .35)";
+  for (const { left, top, height, width } of rects) {
+    const el = document.createElementNS(SVGNS, "rect");
+    el.setAttribute("x", String(left));
+    el.setAttribute("y", String(top));
+    el.setAttribute("width", String(width));
+    el.setAttribute("height", String(height));
+    g.append(el);
+  }
+  return g;
+}
+
+// Selection/annotation range → viewport point above its top edge, so the
+// popover can float over it. The range lives inside a section iframe, so add
+// the iframe's own offset in the top document.
+function anchorPoint(range: Range): { x: number; y: number } {
+  const rect = range.getBoundingClientRect();
+  const frame = (
+    range.startContainer.ownerDocument?.defaultView as Window & {
+      frameElement?: Element | null;
+    }
+  )?.frameElement?.getBoundingClientRect();
+  const ox = frame?.left ?? 0;
+  const oy = frame?.top ?? 0;
+  return { x: ox + rect.left + rect.width / 2, y: oy + rect.top };
+}
+
+type PopoverState =
+  | { mode: "new"; cfi: string; text: string; x: number; y: number }
+  | { mode: "edit"; cfi: string; x: number; y: number };
 
 // Minimal book object foliate's <foliate-view> understands (see foliate-js
 // view.js / paginator.js). We feed it our own HTML sections instead of an EPUB.
@@ -55,33 +118,78 @@ const wrapDoc = (fragment: string) =>
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type FoliateView = any;
 
+// Flat chapter list. foliate drives the active highlight via the relocate event,
+// so this is a plain controlled list — no scroll-spy of its own.
+function Toc({
+  items,
+  activeHref,
+  onPick,
+}: {
+  items: TocItem[];
+  activeHref: string | null;
+  onPick: (href: string) => void;
+}) {
+  return (
+    <ul className="flex flex-col gap-0.5">
+      {items.map((t) => {
+        const href = hrefOf(t);
+        return (
+          <li key={href}>
+            <button
+              onClick={() => onPick(href)}
+              style={{ paddingLeft: `${(t.level - 1) * 12 + 8}px` }}
+              className={cn(
+                "block w-full truncate rounded-md py-1 pr-2 text-left text-sm hover:bg-accent hover:text-accent-foreground",
+                activeHref === href
+                  ? "bg-accent font-medium text-accent-foreground"
+                  : "text-muted-foreground",
+              )}
+            >
+              {t.text}
+            </button>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
 export default function Reader({
   id,
   sections,
   toc,
   initialCFI,
+  initialHighlights,
 }: {
   id: string;
   sections: string[];
   toc: TocItem[];
   initialCFI: string | null;
+  initialHighlights: Highlight[];
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<FoliateView>(null);
-  const tocNavRef = useRef<HTMLElement>(null);
   const lastCfi = useRef<string | null>(initialCFI);
+  const navBusy = useRef(false);
+  const navNext = useRef<number | null>(null);
+  // cfi -> color for every drawn highlight; re-added whenever a section's
+  // overlay is (re)created, so highlights survive navigating away and back.
+  const highlights = useRef<Map<string, string>>(new Map());
+  const [popover, setPopover] = useState<PopoverState | null>(null);
   const [fraction, setFraction] = useState(0);
   const [flow, setFlow] = useState<"paginated" | "scrolled">("paginated");
   const [fontPct, setFontPct] = useState(100);
   const [activeHref, setActiveHref] = useState<string | null>(null);
-  const [ticks, setTicks] = useState<number[]>([]);
   const [tocOpen, setTocOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   // Build the view once per book. sections/toc/initialCFI are stable per page load.
   useEffect(() => {
     let cancelled = false;
     let view: FoliateView = null;
     const urls: string[] = [];
+
+    highlights.current = new Map(initialHighlights.map((h) => [h.cfi, h.color]));
 
     const flush = () => {
       if (lastCfi.current) {
@@ -175,15 +283,48 @@ export default function Reader({
 
       view.renderer.setAttribute("flow", flow);
       view.renderer.setStyles?.(readingCSS(fontPct));
-      setTicks(view.getSectionFractions?.() ?? []);
       view.addEventListener("relocate", (e: CustomEvent) => {
         setFraction(Number.isFinite(e.detail.fraction) ? e.detail.fraction : 0);
         lastCfi.current = e.detail.cfi ?? lastCfi.current;
         setActiveHref(e.detail.tocItem?.href ?? null);
+        setPopover(null); // page turned — drop any open selection popover
       });
-      view.addEventListener("load", (e: CustomEvent) =>
-        e.detail.doc.addEventListener("keydown", onKey),
-      );
+
+      // Highlights, via foliate's overlay plumbing (overlayer.js):
+      // - draw-annotation: how each highlight is painted (our SVG rects).
+      // - create-overlay: fires when a section's overlay (re)mounts — re-add
+      //   every stored highlight so they persist across navigation.
+      // - show-annotation: user clicked an existing highlight → offer removal.
+      view.addEventListener("draw-annotation", (e: CustomEvent) => {
+        const { draw, annotation } = e.detail;
+        draw(drawHighlight, { color: annotation.color });
+      });
+      view.addEventListener("create-overlay", () => {
+        for (const [cfi, color] of highlights.current)
+          view.addAnnotation({ value: cfi, color });
+      });
+      view.addEventListener("show-annotation", (e: CustomEvent) => {
+        const { x, y } = anchorPoint(e.detail.range);
+        setPopover({ mode: "edit", cfi: e.detail.value, x, y });
+      });
+
+      view.addEventListener("load", (e: CustomEvent) => {
+        const { doc, index } = e.detail;
+        doc.addEventListener("keydown", onKey);
+        // Surface the "highlight this" popover when a text selection settles.
+        doc.addEventListener("pointerup", () => {
+          const sel = doc.getSelection();
+          if (!sel || sel.isCollapsed || !sel.rangeCount) {
+            setPopover((p) => (p?.mode === "new" ? null : p));
+            return;
+          }
+          const range = sel.getRangeAt(0);
+          const text = sel.toString().trim();
+          if (!text) return;
+          const { x, y } = anchorPoint(range);
+          setPopover({ mode: "new", cfi: view.getCFI(index, range), text, x, y });
+        });
+      });
 
       if (initialCFI) {
         try {
@@ -221,16 +362,8 @@ export default function Reader({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
-  // Keep the active chapter scrolled into view in the sidebar (from tree.js).
-  useEffect(() => {
-    if (!activeHref) return;
-    tocNavRef.current
-      ?.querySelector(`[data-href="${CSS.escape(activeHref)}"]`)
-      ?.scrollIntoView({ block: "nearest" });
-  }, [activeHref]);
-
-  const goToItem = (item: TocItem) => {
-    viewRef.current?.goTo?.(hrefOf(item));
+  const goToHref = (href: string) => {
+    viewRef.current?.goTo?.(href);
     setTocOpen(false);
   };
 
@@ -247,151 +380,225 @@ export default function Reader({
     viewRef.current?.renderer?.setAttribute("flow", mode);
   };
 
-  const tocList = (items: TocItem[]) => (
-    <ul className="space-y-1">
-      {items.map((h, i) => {
-        const active = hrefOf(h) === activeHref;
-        return (
-          <li key={i} style={{ paddingLeft: (h.level - 1) * 12 }}>
-            <button
-              data-href={hrefOf(h)}
-              aria-current={active ? "true" : undefined}
-              onClick={() => goToItem(h)}
-              className={`block w-full truncate text-left hover:text-foreground ${
-                active
-                  ? "font-medium text-foreground"
-                  : "text-zinc-600 dark:text-zinc-400"
-              }`}
-            >
-              {h.text}
-            </button>
-          </li>
-        );
-      })}
-    </ul>
-  );
+  // Live scrub: navigate on every drag tick, but never run two goToFractions at
+  // once — overlapping calls raced foliate's section load/destroy cycle
+  // (createTreeWalker/unobserve on a torn-down doc). Serialize by coalescing to
+  // the latest requested fraction while one navigation is in flight.
+  const scrub = (v: number) => {
+    navNext.current = v;
+    if (navBusy.current) return;
+    navBusy.current = true;
+    (async () => {
+      while (navNext.current !== null) {
+        const target = navNext.current;
+        navNext.current = null;
+        try {
+          await viewRef.current?.goToFraction?.(target);
+        } catch {
+          /* section swapped mid-nav; next loop iteration corrects it */
+        }
+      }
+      navBusy.current = false;
+    })();
+  };
+
+  const applyHighlight = (color: string) => {
+    if (popover?.mode !== "new") return;
+    const { cfi, text } = popover;
+    highlights.current.set(cfi, color);
+    viewRef.current?.addAnnotation?.({ value: cfi, color });
+    viewRef.current?.deselect?.();
+    setPopover(null);
+    fetch(`/api/books/${id}/highlights`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ cfi, color, text }),
+    }).catch(() => {});
+  };
+
+  const removeHighlight = () => {
+    if (!popover) return;
+    const { cfi } = popover;
+    highlights.current.delete(cfi);
+    viewRef.current?.deleteAnnotation?.({ value: cfi });
+    setPopover(null);
+    fetch(`/api/books/${id}/highlights`, {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ cfi }),
+    }).catch(() => {});
+  };
+
+  const tocNode = <Toc items={toc} activeHref={activeHref} onPick={goToHref} />;
 
   return (
     <div className="flex gap-6">
-      {toc.length > 0 && (
-        <nav
-          ref={tocNavRef}
-          className="sticky top-8 hidden max-h-[calc(100dvh-13rem)] w-56 shrink-0 self-start overflow-auto text-sm lg:block"
+      {popover && (
+        <div
+          className="fixed z-50 -translate-x-1/2 -translate-y-full"
+          style={{ left: popover.x, top: popover.y - 8 }}
         >
-          <p className="mb-2 font-semibold text-zinc-500">Contents</p>
-          {tocList(toc)}
+          <div className="flex items-center gap-1 rounded-lg border bg-popover p-1 text-popover-foreground shadow-md">
+            {popover.mode === "new" ? (
+              HIGHLIGHT_COLORS.map((c) => (
+                <button
+                  key={c}
+                  type="button"
+                  aria-label={`Highlight ${c}`}
+                  onClick={() => applyHighlight(c)}
+                  className="size-6 rounded-full border border-black/10 transition hover:scale-110"
+                  style={{ background: c }}
+                />
+              ))
+            ) : (
+              <Button variant="ghost" size="sm" onClick={removeHighlight}>
+                <Trash2 className="size-3.5" />
+                Remove
+              </Button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {toc.length > 0 && (
+        <nav className="sticky top-8 hidden max-h-[calc(100dvh-13rem)] w-56 shrink-0 self-start overflow-auto lg:block">
+          {tocNode}
         </nav>
       )}
 
       <div className="min-w-0 flex-1">
         <div
-          className="relative overflow-hidden rounded-lg border border-black/10 bg-white dark:border-white/15 dark:bg-zinc-950"
+          className="relative overflow-hidden rounded-lg border bg-background"
           style={{ height: "calc(100dvh - 13rem)" }}
         >
           {/* foliate mounts here; React never touches this node's children */}
           <div ref={hostRef} className="absolute inset-0" />
 
-          <button
-            aria-label="Previous page"
-            onClick={() => viewRef.current?.goLeft?.()}
-            className="absolute inset-y-0 left-0 z-10 flex w-10 items-center justify-center text-zinc-400 hover:bg-black/5 hover:text-foreground dark:hover:bg-white/10"
-          >
-            ‹
-          </button>
-          <button
-            aria-label="Next page"
-            onClick={() => viewRef.current?.goRight?.()}
-            className="absolute inset-y-0 right-0 z-10 flex w-10 items-center justify-center text-zinc-400 hover:bg-black/5 hover:text-foreground dark:hover:bg-white/10"
-          >
-            ›
-          </button>
+          <div className="absolute inset-y-0 left-0 z-10 flex items-center pl-1">
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label="Previous page"
+              onClick={() => viewRef.current?.goLeft?.()}
+            >
+              <ChevronLeft />
+            </Button>
+          </div>
+          <div className="absolute inset-y-0 right-0 z-10 flex items-center pr-1">
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label="Next page"
+              onClick={() => viewRef.current?.goRight?.()}
+            >
+              <ChevronRight />
+            </Button>
+          </div>
         </div>
 
-        <div className="mt-3 flex items-center gap-3 text-sm">
+        <div className="mt-3 flex items-center gap-3">
           {toc.length > 0 && (
-            <button
-              onClick={() => setTocOpen((v) => !v)}
-              className="rounded border border-black/15 px-2 py-1 hover:bg-black/5 lg:hidden dark:border-white/20 dark:hover:bg-white/10"
-            >
-              Contents
-            </button>
+            <span className="lg:hidden">
+              <Popover open={tocOpen} onOpenChange={setTocOpen}>
+                <PopoverTrigger
+                  render={
+                    <Button variant="ghost" size="icon" aria-label="Contents" />
+                  }
+                >
+                  <Menu />
+                </PopoverTrigger>
+                <PopoverContent
+                  side="top"
+                  align="start"
+                  className="max-h-80 w-64 overflow-auto"
+                >
+                  {tocNode}
+                </PopoverContent>
+              </Popover>
+            </span>
           )}
 
-          {/* Settings menu (font size + layout), inspired by foliate-js menu.js.
-              <details> gives native toggle + keyboard a11y with no extra state. */}
-          <details className="relative">
-            <summary className="flex cursor-pointer list-none items-center rounded border border-black/15 px-2 py-1 hover:bg-black/5 [&::-webkit-details-marker]:hidden dark:border-white/20 dark:hover:bg-white/10">
-              <span className="font-serif">
-                A<span className="text-xs">a</span>
-              </span>
-            </summary>
-            <div className="absolute bottom-full left-0 z-20 mb-1 w-52 rounded-lg border border-black/10 bg-white p-3 shadow-lg dark:border-white/15 dark:bg-zinc-900">
-              <p className="mb-1 text-xs font-medium text-zinc-500">Font size</p>
-              <div className="mb-3 flex items-center gap-2">
-                <button
-                  onClick={() => setFont(-10)}
-                  className="h-7 w-8 rounded border border-black/15 hover:bg-black/5 dark:border-white/20 dark:hover:bg-white/10"
-                >
-                  A−
-                </button>
-                <span className="flex-1 text-center tabular-nums text-zinc-500">
-                  {fontPct}%
+          <Popover open={settingsOpen} onOpenChange={setSettingsOpen}>
+            <PopoverTrigger
+              render={
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  aria-label="Reading settings"
+                />
+              }
+            >
+              <Settings2 />
+            </PopoverTrigger>
+            <PopoverContent side="top" align="start" className="w-60">
+              <div className="flex flex-col gap-1.5">
+                <span className="text-xs font-medium text-muted-foreground">
+                  Font size
                 </span>
-                <button
-                  onClick={() => setFont(10)}
-                  className="h-7 w-8 rounded border border-black/15 text-base hover:bg-black/5 dark:border-white/20 dark:hover:bg-white/10"
-                >
-                  A+
-                </button>
-              </div>
-              <p className="mb-1 text-xs font-medium text-zinc-500">Layout</p>
-              <div className="flex gap-1">
-                {(["paginated", "scrolled"] as const).map((mode) => (
-                  <button
-                    key={mode}
-                    aria-pressed={flow === mode}
-                    onClick={() => setFlowMode(mode)}
-                    className={`flex-1 rounded border px-2 py-1 capitalize ${
-                      flow === mode
-                        ? "border-foreground bg-foreground text-background"
-                        : "border-black/15 hover:bg-black/5 dark:border-white/20 dark:hover:bg-white/10"
-                    }`}
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="icon-sm"
+                    aria-label="Decrease font size"
+                    onClick={() => setFont(-10)}
                   >
-                    {mode}
-                  </button>
-                ))}
+                    <Minus />
+                  </Button>
+                  <span className="text-sm tabular-nums">{fontPct}%</span>
+                  <Button
+                    variant="outline"
+                    size="icon-sm"
+                    aria-label="Increase font size"
+                    onClick={() => setFont(10)}
+                  >
+                    <Plus />
+                  </Button>
+                </div>
               </div>
-            </div>
-          </details>
+              <div className="flex flex-col gap-1.5">
+                <span className="text-xs font-medium text-muted-foreground">
+                  Layout
+                </span>
+                {/* ponytail: two buttons instead of a segmented control — Base UI's
+                    ToggleGroup is multi-select, so single-choice is less code here. */}
+                <div className="flex rounded-lg border p-0.5">
+                  {(["paginated", "scrolled"] as const).map((mode) => (
+                    <Button
+                      key={mode}
+                      variant={flow === mode ? "secondary" : "ghost"}
+                      size="sm"
+                      className="flex-1 capitalize"
+                      onClick={() => setFlowMode(mode)}
+                    >
+                      {mode}
+                    </Button>
+                  ))}
+                </div>
+              </div>
+            </PopoverContent>
+          </Popover>
 
-          <input
-            type="range"
-            list="section-ticks"
-            min={0}
-            max={1}
-            step={0.0001}
-            value={fraction}
-            onChange={(e) =>
-              viewRef.current?.goToFraction?.(parseFloat(e.target.value))
-            }
-            className="min-w-0 flex-1 accent-foreground"
-            aria-label="Reading position"
-          />
-          <datalist id="section-ticks">
-            {ticks.map((f, i) => (
-              <option key={i} value={f} />
-            ))}
-          </datalist>
-          <span className="w-10 shrink-0 text-right tabular-nums text-zinc-500">
+          <span className="min-w-0 flex-1">
+            <Slider
+              aria-label="Reading position"
+              min={0}
+              max={1}
+              step={0.0001}
+              value={[fraction]}
+              // Live page updates while dragging; scrub() serializes the calls
+              // so they never overlap (see its comment).
+              onValueChange={(v) => {
+                const n = Array.isArray(v) ? v[0] : v;
+                setFraction(n);
+                scrub(n);
+              }}
+            />
+          </span>
+
+          <span className="w-10 shrink-0 text-right text-xs tabular-nums text-muted-foreground">
             {Math.round(fraction * 100)}%
           </span>
         </div>
-
-        {tocOpen && toc.length > 0 && (
-          <nav className="mt-3 max-h-64 overflow-auto rounded-lg border border-black/10 p-3 text-sm lg:hidden dark:border-white/15">
-            {tocList(toc)}
-          </nav>
-        )}
       </div>
     </div>
   );

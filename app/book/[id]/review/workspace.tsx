@@ -2,11 +2,13 @@
 
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import PageEditor from "./editor";
 
 type PageData = { markdown: string; image: string | null };
 
-// Paginated review: layout image (left) beside the page's Milkdown (right).
+// Paginated review: layout image (left) beside the page's editor (right).
 // Only the current page's text + image are loaded, so it scales to 300-page books.
 export default function Workspace({
   id,
@@ -23,6 +25,7 @@ export default function Workspace({
   const [idx, setIdx] = useState(0);
   const [page, setPage] = useState<PageData>(initialPage);
   const [busy, setBusy] = useState(false);
+  const [jump, setJump] = useState("1");
   const getMd = useRef<() => string>(() => initialPage.markdown);
 
   async function saveCurrent() {
@@ -40,6 +43,7 @@ export default function Workspace({
     const res = await fetch(`/api/books/${id}/pages/${target}`);
     setPage(await res.json());
     setIdx(target);
+    setJump(String(target + 1)); // keep the page field in sync with the current page
     setBusy(false);
   }
 
@@ -53,12 +57,14 @@ export default function Workspace({
   return (
     <div className="flex gap-4">
       {hasImages && (
-        <div className="sticky top-4 hidden max-h-[85vh] w-1/2 shrink-0 self-start overflow-auto rounded-lg border border-black/10 bg-zinc-50 dark:border-white/15 dark:bg-zinc-900 lg:block">
+        // ponytail: layout-scan image panel stays Tailwind — it's an image
+        // container with no shadcn equivalent (like the shelf cover).
+        <div className="sticky top-4 hidden max-h-[85vh] w-1/2 shrink-0 self-start overflow-auto rounded-lg border bg-muted/40 lg:block">
           {page.image ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img src={page.image} alt={`Page ${idx + 1} layout`} className="w-full" />
           ) : (
-            <p className="p-6 text-sm text-zinc-500">
+            <p className="p-6 text-muted-foreground">
               No layout preview for this page.
             </p>
           )}
@@ -66,51 +72,53 @@ export default function Workspace({
       )}
 
       <div className="min-w-0 flex-1">
-        <div className="mb-3 flex flex-wrap items-center gap-2 text-sm">
-          <button
-            onClick={() => goto(idx - 1)}
+        <div className="mb-3 flex flex-wrap items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
             disabled={busy || idx === 0}
-            className="rounded border border-black/15 px-2 py-1 hover:bg-black/5 disabled:opacity-40 dark:border-white/20 dark:hover:bg-white/10"
+            onClick={() => goto(idx - 1)}
           >
             ← Prev
-          </button>
-          <span className="flex items-center gap-1">
+          </Button>
+          <span className="flex items-center gap-1 text-sm text-muted-foreground">
             Page
-            <input
-              key={idx}
+            <Input
+              aria-label="Go to page"
               type="number"
+              inputMode="numeric"
               min={1}
               max={total}
-              defaultValue={idx + 1}
+              value={jump}
+              onChange={(e) => setJump(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === "Enter")
-                  goto(Number(e.currentTarget.value) - 1);
+                if (e.key === "Enter") goto(Number(jump) - 1);
               }}
-              className="w-14 rounded border border-black/15 bg-transparent px-1 py-0.5 text-center dark:border-white/20"
+              className="h-7 w-16"
             />
             / {total}
           </span>
-          <button
-            onClick={() => goto(idx + 1)}
+          <Button
+            variant="outline"
+            size="sm"
             disabled={busy || idx === total - 1}
-            className="rounded border border-black/15 px-2 py-1 hover:bg-black/5 disabled:opacity-40 dark:border-white/20 dark:hover:bg-white/10"
+            onClick={() => goto(idx + 1)}
           >
             Next →
-          </button>
-          <button
-            onClick={saveCurrent}
-            disabled={busy}
-            className="ml-auto rounded border border-black/15 px-3 py-1 font-medium hover:bg-black/5 disabled:opacity-50 dark:border-white/20 dark:hover:bg-white/10"
-          >
-            Save page
-          </button>
-          <button
-            onClick={approve}
-            disabled={busy}
-            className="rounded bg-foreground px-3 py-1 font-medium text-background hover:opacity-90 disabled:opacity-50"
-          >
-            Approve &amp; add to shelf
-          </button>
+          </Button>
+          <span className="ml-auto flex gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={busy}
+              onClick={saveCurrent}
+            >
+              Save page
+            </Button>
+            <Button size="sm" disabled={busy} onClick={approve}>
+              Approve &amp; add to shelf
+            </Button>
+          </span>
         </div>
         <PageEditor key={idx} markdown={page.markdown} getMarkdownRef={getMd} />
       </div>
