@@ -1,11 +1,22 @@
 import { createClient, type Client } from "@libsql/client";
 
-// Defaults to a local libSQL file so the app runs with zero setup.
-// Set TURSO_DATABASE_URL (+ TURSO_AUTH_TOKEN) to point at remote Turso.
-export const db: Client = createClient({
-  url: process.env.TURSO_DATABASE_URL ?? "file:scanbook.db",
-  authToken: process.env.TURSO_AUTH_TOKEN,
-});
+// Prod talks to remote Turso directly. Dev uses an embedded replica of it —
+// every query is a local-disk read (~1ms) instead of a network round trip,
+// with writes forwarded to Turso and changes pulled in the background.
+// No TURSO_DATABASE_URL at all → plain local file, zero setup.
+const remote = process.env.TURSO_DATABASE_URL;
+export const db: Client =
+  remote && process.env.NODE_ENV === "development"
+    ? createClient({
+        url: "file:replica.db",
+        syncUrl: remote,
+        authToken: process.env.TURSO_AUTH_TOKEN,
+        syncInterval: 60,
+      })
+    : createClient({
+        url: remote ?? "file:scanbook.db",
+        authToken: process.env.TURSO_AUTH_TOKEN,
+      });
 
 export type BookStatus =
   | "queued"
@@ -25,6 +36,7 @@ export interface Book {
   cover_url: string | null;
   source_pdf_url: string | null;
   error: string | null;
+  archived: number; // 0 | 1
   created_at: number;
   updated_at: number;
 }
@@ -33,7 +45,12 @@ let schemaReady: Promise<void> | null = null;
 
 // Idempotent; memoized so it runs once per server process.
 export function ensureSchema(): Promise<void> {
-  schemaReady ??= db.batch(
+  schemaReady ??= runSchema();
+  return schemaReady;
+}
+
+async function runSchema(): Promise<void> {
+  await db.batch(
     [
       `CREATE TABLE IF NOT EXISTS books (
         id TEXT PRIMARY KEY,
@@ -46,12 +63,15 @@ export function ensureSchema(): Promise<void> {
         cover_url TEXT,
         source_pdf_url TEXT,
         error TEXT,
+        archived INTEGER NOT NULL DEFAULT 0,
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL
       )`,
       `CREATE TABLE IF NOT EXISTS reading_progress (
         book_id TEXT PRIMARY KEY,
         position TEXT,
+        fraction REAL NOT NULL DEFAULT 0,
+        seconds INTEGER NOT NULL DEFAULT 0,
         updated_at INTEGER NOT NULL
       )`,
       // Per-page rows for the side-by-side review workspace. layout_image is a
@@ -75,16 +95,28 @@ export function ensureSchema(): Promise<void> {
       )`,
     ],
     "write",
-  ).then(() => {});
-  return schemaReady;
+  );
 }
 
 export async function listBooks(): Promise<Book[]> {
   await ensureSchema();
-  const { rows } = await db.execute(
-    "SELECT * FROM books ORDER BY created_at DESC",
+  // The shelf never reads `content` (a whole book's markdown — up to MBs), so
+  // skip it: otherwise it's fetched from Turso and serialized into the client
+  // shelf for every book on every render/poll. libSQL Rows also aren't plain
+  // objects (index accessors + prototype), so rebuild each as one that can
+  // cross the server→client boundary.
+  const { columns, rows } = await db.execute(
+    `SELECT id, title, author, status, page_count, pages_done, cover_url,
+            source_pdf_url, error, archived, created_at, updated_at
+     FROM books ORDER BY created_at DESC`,
   );
-  return rows as unknown as Book[];
+  return rows.map(
+    (r) =>
+      ({
+        ...Object.fromEntries(columns.map((c, i) => [c, r[i]])),
+        content: null,
+      }) as unknown as Book,
+  );
 }
 
 export async function getBook(id: string): Promise<Book | null> {
@@ -120,6 +152,7 @@ const UPDATABLE = new Set([
   "content",
   "cover_url",
   "error",
+  "archived",
 ]);
 
 export async function updateBook(
@@ -146,14 +179,45 @@ export async function getProgress(bookId: string): Promise<string | null> {
   return (rows[0]?.position as string | undefined) ?? null;
 }
 
-export async function setProgress(bookId: string, position: string): Promise<void> {
+// `secondsDelta` is added to the running total server-side (the reader sends the
+// time accrued since its last beacon, not a wall-clock reading). A null position
+// keeps whatever's stored — a time-only beacon shouldn't wipe the resume point.
+export async function setProgress(
+  bookId: string,
+  position: string | null,
+  fraction: number,
+  secondsDelta: number,
+): Promise<void> {
   await ensureSchema();
   await db.execute({
-    sql: `INSERT INTO reading_progress (book_id, position, updated_at)
-          VALUES (?, ?, ?)
-          ON CONFLICT(book_id) DO UPDATE SET position = excluded.position, updated_at = excluded.updated_at`,
-    args: [bookId, position, Date.now()],
+    sql: `INSERT INTO reading_progress (book_id, position, fraction, seconds, updated_at)
+          VALUES (?, ?, ?, ?, ?)
+          ON CONFLICT(book_id) DO UPDATE SET
+            position = COALESCE(excluded.position, reading_progress.position),
+            fraction = excluded.fraction,
+            seconds = reading_progress.seconds + excluded.seconds,
+            updated_at = excluded.updated_at`,
+    args: [bookId, position, fraction, Math.max(0, Math.round(secondsDelta)), Date.now()],
   });
+}
+
+export interface Progress {
+  fraction: number;
+  seconds: number;
+}
+
+// One-shot map of every book's reading fraction + accrued seconds, for the shelf.
+export async function getAllProgress(): Promise<Map<string, Progress>> {
+  await ensureSchema();
+  const { rows } = await db.execute(
+    "SELECT book_id, fraction, seconds FROM reading_progress",
+  );
+  return new Map(
+    rows.map((r) => [
+      r.book_id as string,
+      { fraction: Number(r.fraction) || 0, seconds: Number(r.seconds) || 0 },
+    ]),
+  );
 }
 
 export async function deleteBook(id: string): Promise<void> {

@@ -1,17 +1,40 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import localFont from "next/font/local";
 import Link from "next/link";
 import "./globals.css";
-import { Button } from "@/components/ui/button";
+import { ThemeToggle } from "@/app/theme-toggle";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
+// Söhne — the app's sans (UI) face. German weight names map to CSS weights.
+const sohne = localFont({
+  variable: "--font-sans",
+  display: "swap",
+  src: [
+    { path: "./fonts/test-soehne-buch.woff2", weight: "400", style: "normal" },
+    { path: "./fonts/test-soehne-buch-kursiv.woff2", weight: "400", style: "italic" },
+    { path: "./fonts/test-soehne-kraftig.woff2", weight: "500", style: "normal" },
+    { path: "./fonts/test-soehne-kraftig-kursiv.woff2", weight: "500", style: "italic" },
+    { path: "./fonts/test-soehne-halbfett.woff2", weight: "600", style: "normal" },
+    { path: "./fonts/test-soehne-halbfett-kursiv.woff2", weight: "600", style: "italic" },
+    { path: "./fonts/test-soehne-dreiviertelfett.woff2", weight: "700", style: "normal" },
+    { path: "./fonts/test-soehne-dreiviertelfett-kursiv.woff2", weight: "700", style: "italic" },
+  ],
 });
 
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
+// Louize — the serif face (font-serif utility; the reader loads its own copies
+// from /public/fonts). preload:false — it's not the body font, so don't force
+// it onto every page.
+const louize = localFont({
+  variable: "--font-serif",
+  display: "swap",
+  preload: false,
+  src: [
+    { path: "./fonts/LouizeTrial-Regular.otf", weight: "400", style: "normal" },
+    { path: "./fonts/LouizeTrial-Italic.otf", weight: "400", style: "italic" },
+    { path: "./fonts/LouizeTrial-Medium.otf", weight: "500", style: "normal" },
+    { path: "./fonts/LouizeTrial-MediumItalic.otf", weight: "500", style: "italic" },
+    { path: "./fonts/LouizeTrial-Bold.otf", weight: "700", style: "normal" },
+    { path: "./fonts/LouizeTrial-BoldItalic.otf", weight: "700", style: "italic" },
+  ],
 });
 
 export const metadata: Metadata = {
@@ -19,11 +42,10 @@ export const metadata: Metadata = {
   description: "Turn scanned PDF books into readable digital ones.",
 };
 
-// ponytail: follow the OS colour scheme by toggling shadcn's `.dark` class from
-// matchMedia — no theme-toggle UI or next-themes dep, since the app has always
-// just tracked the system setting. Inlined so it runs before paint (no flash);
-// suppressHydrationWarning on <html> covers the class it adds.
-const darkModeScript = `(function(){try{var m=matchMedia('(prefers-color-scheme: dark)');var a=function(){document.documentElement.classList.toggle('dark',m.matches)};a();m.addEventListener('change',a)}catch(e){}})();`;
+// Apply the saved theme before paint (no flash), falling back to the OS setting
+// when the user hasn't chosen one. ThemeToggle writes localStorage.theme.
+// suppressHydrationWarning on <html> covers the class this adds.
+const themeScript = `(function(){try{var t=localStorage.getItem('theme');var d=t?t==='dark':matchMedia('(prefers-color-scheme: dark)').matches;document.documentElement.classList.toggle('dark',d)}catch(e){}})();`;
 
 export default function RootLayout({
   children,
@@ -34,18 +56,63 @@ export default function RootLayout({
     <html
       lang="en"
       suppressHydrationWarning
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      className={`${sohne.variable} ${louize.variable} h-full antialiased`}
     >
       <body className="flex h-full flex-col">
-        <script dangerouslySetInnerHTML={{ __html: darkModeScript }} />
-        <header className="sticky top-0 z-20 flex items-center justify-between border-b bg-background/80 px-6 py-3 backdrop-blur">
-          <Link href="/" className="text-lg font-semibold">
-            📚 Duo
-          </Link>
-          <Button nativeButton={false} render={<Link href="/upload">Upload PDF</Link>} />
+        <script dangerouslySetInnerHTML={{ __html: themeScript }} />
+        {/* Full-width bar + backdrop; inner row capped to the same max-w-7xl
+            column as the page content so Duo/toggle align with it. */}
+        {/* overflow-hidden + scrollbar-gutter reserves the same right-side gutter
+            the scrollable <main> does, so both max-w-7xl columns centre on the
+            same width and their edges line up. */}
+        <header className="sticky top-0 z-20 overflow-hidden border-b bg-background/80 backdrop-blur [scrollbar-gutter:stable]">
+          <div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-3">
+            <Link href="/" className="font-serif text-2xl">
+              Duo
+            </Link>
+            <nav className="flex items-center gap-4">
+              <Link
+                href="/about"
+                className="text-sm text-muted-foreground transition-colors hover:text-foreground"
+              >
+                about
+              </Link>
+              <ThemeToggle />
+            </nav>
+          </div>
         </header>
-        <main className="min-h-0 flex-1 overflow-auto p-6">
-          <div className="mx-auto w-full max-w-5xl">{children}</div>
+        <main className="flex min-h-0 flex-1 flex-col overflow-auto py-4 [scrollbar-gutter:stable]">
+          <div className="mx-auto w-full max-w-7xl flex-1 px-4">{children}</div>
+          {/* Hairline inset from the viewport edges instead of full-bleed. */}
+          <div className="mx-4 border-t" />
+          {/* Placeholder links for now (x.com / instagram.com / jess.email). */}
+          <footer className="mx-auto w-full max-w-7xl px-4 py-8 text-sm text-muted-foreground">
+            Made by Jess with love. You can find me on{" "}
+            <a
+              href="https://x.com"
+              target="_blank"
+              rel="noreferrer"
+              className="underline underline-offset-4 hover:text-foreground"
+            >
+              X/Twitter
+            </a>
+            ,{" "}
+            <a
+              href="https://instagram.com"
+              target="_blank"
+              rel="noreferrer"
+              className="underline underline-offset-4 hover:text-foreground"
+            >
+              Instagram
+            </a>{" "}
+            or reach me via{" "}
+            <a
+              href="mailto:contact@jess.email"
+              className="underline underline-offset-4 hover:text-foreground"
+            >
+              contact@jess.email
+            </a>
+          </footer>
         </main>
       </body>
     </html>

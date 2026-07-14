@@ -6,8 +6,13 @@ async function save(
   ctx: RouteContext<"/api/books/[id]/progress">,
 ) {
   const { id } = await ctx.params;
-  const { position } = await request.json();
-  await setProgress(id, String(position));
+  const { position, fraction, seconds } = await request.json();
+  await setProgress(
+    id,
+    position != null ? String(position) : null,
+    Number(fraction) || 0,
+    Number(seconds) || 0,
+  );
   return NextResponse.json({ ok: true });
 }
 

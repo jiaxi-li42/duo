@@ -36,9 +36,11 @@ yarn-error.log*
 # vercel
 .vercel
 
-# local libSQL dev database
+# local libSQL dev database + embedded replica of remote Turso
 /scanbook.db
 /scanbook.db-*
+/replica.db
+/replica.db-*
 
 # typescript
 *.tsbuildinfo

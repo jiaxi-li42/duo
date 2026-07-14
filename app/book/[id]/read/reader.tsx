@@ -84,9 +84,13 @@ const hrefOf = (item: TocItem) => `${item.index}#${item.id}`;
 // bits (font scale, justification) live in readingCSS below and are pushed live
 // via renderer.setStyles, so they change without rebuilding the blob docs.
 const SECTION_CSS = `
+@font-face{font-family:"Louize";src:url("/fonts/LouizeTrial-Regular.otf") format("opentype");font-weight:400;font-style:normal;font-display:swap}
+@font-face{font-family:"Louize";src:url("/fonts/LouizeTrial-Italic.otf") format("opentype");font-weight:400;font-style:italic;font-display:swap}
+@font-face{font-family:"Louize";src:url("/fonts/LouizeTrial-Medium.otf") format("opentype");font-weight:500;font-style:normal;font-display:swap}
+@font-face{font-family:"Louize";src:url("/fonts/LouizeTrial-Bold.otf") format("opentype");font-weight:700;font-style:normal;font-display:swap}
 html,body{margin:0;padding:0}
 :root{color-scheme:light dark}
-body{font-family:Georgia,"Times New Roman",serif;color:#1a1a1a}
+body{font-family:"Louize",Georgia,"Times New Roman",serif;color:#1a1a1a}
 @media (prefers-color-scheme:dark){body{color:#c9c9c9}}
 p{margin:0 0 1em}
 h1,h2,h3,h4{line-height:1.25;margin:1.4em 0 .6em;font-weight:600}
@@ -170,6 +174,10 @@ export default function Reader({
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<FoliateView>(null);
   const lastCfi = useRef<string | null>(initialCFI);
+  // Latest reading fraction + reading time not yet flushed to the server.
+  const lastFraction = useRef(0);
+  const pendingMs = useRef(0);
+  const activeStart = useRef(0);
   const navBusy = useRef(false);
   const navNext = useRef<number | null>(null);
   // cfi -> color for every drawn highlight; re-added whenever a section's
@@ -191,14 +199,39 @@ export default function Reader({
 
     highlights.current = new Map(initialHighlights.map((h) => [h.cfi, h.color]));
 
-    const flush = () => {
-      if (lastCfi.current) {
+    // Bank the time since we last looked, but only while the tab is visible — so
+    // a book left open in a background tab or another window doesn't rack up hours.
+    const accrue = () => {
+      if (document.visibilityState === "visible")
+        pendingMs.current += Date.now() - activeStart.current;
+      activeStart.current = Date.now();
+    };
+
+    // Persist resume point + fraction + the whole seconds accrued since the last
+    // send (added to the running total server-side). Beacon on unload; keepalive
+    // fetch on the interval.
+    const save = (beacon: boolean) => {
+      accrue();
+      const seconds = Math.floor(pendingMs.current / 1000);
+      pendingMs.current -= seconds * 1000;
+      if (!lastCfi.current && seconds === 0) return;
+      const body = JSON.stringify({
+        position: lastCfi.current,
+        fraction: lastFraction.current,
+        seconds,
+      });
+      if (beacon) {
         navigator.sendBeacon?.(
           `/api/books/${id}/progress`,
-          new Blob([JSON.stringify({ position: lastCfi.current })], {
-            type: "application/json",
-          }),
+          new Blob([body], { type: "application/json" }),
         );
+      } else {
+        fetch(`/api/books/${id}/progress`, {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body,
+          keepalive: true,
+        }).catch(() => {});
       }
     };
 
@@ -284,7 +317,9 @@ export default function Reader({
       view.renderer.setAttribute("flow", flow);
       view.renderer.setStyles?.(readingCSS(fontPct));
       view.addEventListener("relocate", (e: CustomEvent) => {
-        setFraction(Number.isFinite(e.detail.fraction) ? e.detail.fraction : 0);
+        const f = Number.isFinite(e.detail.fraction) ? e.detail.fraction : 0;
+        setFraction(f);
+        lastFraction.current = f;
         lastCfi.current = e.detail.cfi ?? lastCfi.current;
         setActiveHref(e.detail.tocItem?.href ?? null);
         setPopover(null); // page turned — drop any open selection popover
@@ -337,15 +372,23 @@ export default function Reader({
       }
     };
 
+    activeStart.current = Date.now();
+    const onVis = () => accrue(); // bank/rebase the reading clock on every flip
+    const beacon = () => save(true);
+    const tick = setInterval(() => save(false), 20000);
+
     const ready = setup().catch(console.error);
     window.addEventListener("keydown", onKey);
-    window.addEventListener("pagehide", flush);
+    window.addEventListener("pagehide", beacon);
+    document.addEventListener("visibilitychange", onVis);
 
     return () => {
       cancelled = true;
-      flush();
+      save(true);
+      clearInterval(tick);
       window.removeEventListener("keydown", onKey);
-      window.removeEventListener("pagehide", flush);
+      window.removeEventListener("pagehide", beacon);
+      document.removeEventListener("visibilitychange", onVis);
       // Tear down only after setup() settles — never close a view whose open()
       // or goTo() is still in flight (dev StrictMode double-mount / fast unmount),
       // which would leave observers running on a detached iframe document.

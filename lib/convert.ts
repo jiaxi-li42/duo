@@ -11,6 +11,8 @@ export async function triggerConvert(bookId: string, pdfUrl: string): Promise<vo
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ book_id: bookId, pdf_url: pdfUrl }),
+      // Enqueue is quick; don't let a hung Modal stall the caller's request.
+      signal: AbortSignal.timeout(10000),
     });
   } catch (err) {
     console.error("Modal convert trigger failed:", err);
@@ -34,6 +36,7 @@ export async function triggerCombine(
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ book_id: bookId, en_book_id: enBookId, zh_book_id: zhBookId }),
+      signal: AbortSignal.timeout(10000),
     });
   } catch (err) {
     console.error("Modal combine trigger failed:", err);
@@ -57,6 +60,7 @@ export async function triggerDocConvert(
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ book_id: bookId, source_url: sourceUrl, ext }),
+      signal: AbortSignal.timeout(10000),
     });
   } catch (err) {
     console.error("Modal doc-convert trigger failed:", err);
