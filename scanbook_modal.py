@@ -83,6 +83,12 @@ def _now_ms() -> int:
     return int(time.time() * 1000)
 
 
+def _gone(db, book_id: str) -> bool:
+    """True when the book row no longer exists — the user deleted it
+    mid-conversion. Callers should clean up their page rows and stop."""
+    return not db.execute("SELECT 1 FROM books WHERE id = ?", [book_id]).rows
+
+
 class ConvertReq(BaseModel):
     book_id: str
     pdf_url: str
@@ -154,7 +160,12 @@ def convert(book_id: str, pdf_url: str):
             raise RuntimeError("No renderable pages found in PDF.")
 
         cover = PILimage_to_base64(_thumbnail(images[0]))
-        update(status="processing", page_count=len(images), pages_done=0, cover_url=cover)
+        update(status="processing", page_count=len(images), pages_done=0)
+        # Default cover only: a user-uploaded cover (set at creation) wins.
+        db.execute(
+            "UPDATE books SET cover_url = ? WHERE id = ? AND cover_url IS NULL",
+            [cover, book_id],
+        )
 
         parser = DotsMOCRParser(
             use_hf=False, ip="127.0.0.1", port=8000, model_name="model",
@@ -173,6 +184,10 @@ def convert(book_id: str, pdf_url: str):
 
         parts = []
         for i, img in enumerate(images):
+            # Deleted mid-conversion? Clean up our page rows and stop burning GPU.
+            if _gone(db, book_id):
+                db.execute("DELETE FROM pages WHERE book_id = ?", [book_id])
+                return
             res = parser._parse_single_image(
                 img, "prompt_layout_all_en", save_dir, "book",
                 source="pdf", page_idx=i,
@@ -299,8 +314,12 @@ def combine(book_id: str, en_book_id: str, zh_book_id: str):
     try:
         en_md, en_cover = load(en_book_id)
         zh_md, _ = load(zh_book_id)
+        # Default cover only: a user-uploaded cover (set at creation) wins.
         if en_cover:
-            update(cover_url=en_cover)
+            db.execute(
+                "UPDATE books SET cover_url = ? WHERE id = ? AND cover_url IS NULL",
+                [en_cover, book_id],
+            )
 
         pairs = pair_chapters(split_chapters(en_md), split_chapters(zh_md))
         update(status="processing", page_count=len(pairs), pages_done=0)
@@ -313,6 +332,10 @@ def combine(book_id: str, en_book_id: str, zh_book_id: str):
         db.execute("DELETE FROM pages WHERE book_id = ?", [book_id])
 
         for i, (en_ch, zh_ch) in enumerate(pairs):
+            # Deleted mid-merge? Clean up our page rows and stop.
+            if _gone(db, book_id):
+                db.execute("DELETE FROM pages WHERE book_id = ?", [book_id])
+                return
             md = merge_chapter(en_ch, zh_ch, np)
             # OR REPLACE: idempotent so a Modal retry or an accidental double-trigger
             # overwrites rather than colliding on the (book_id, idx) primary key.
@@ -611,6 +634,10 @@ def convert_doc(book_id: str, source_url: str, ext: str):
         )
         db.execute("DELETE FROM pages WHERE book_id = ?", [book_id])
         for i, page_md in enumerate(pages):
+            # Deleted mid-conversion? Clean up our page rows and stop.
+            if _gone(db, book_id):
+                db.execute("DELETE FROM pages WHERE book_id = ?", [book_id])
+                return
             db.execute(
                 "INSERT OR REPLACE INTO pages (book_id, idx, markdown, layout_image) VALUES (?, ?, ?, NULL)",
                 [book_id, i, page_md],

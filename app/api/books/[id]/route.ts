@@ -21,8 +21,10 @@ export async function DELETE(
   const { id } = await ctx.params;
   const book = await getBook(id);
   // Remove the book's blobs (source file + cover) so deletes don't leak storage.
+  // Covers are usually inline data URIs — passing one to del() throws and would
+  // skip deleting the real blobs too, so only real URLs make the list.
   const blobs = [book?.source_pdf_url, book?.cover_url].filter(
-    (u): u is string => !!u,
+    (u): u is string => !!u && u.startsWith("http"),
   );
   if (blobs.length) {
     try {

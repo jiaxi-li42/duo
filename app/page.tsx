@@ -39,6 +39,7 @@ export default async function Bookshelf() {
     title: b.title,
     archived: !!b.archived,
     ready: b.status === "ready",
+    cover: b.cover_url,
   }));
 
   // First-page previews, only for the coverless ready books that render one.

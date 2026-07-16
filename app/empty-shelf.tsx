@@ -1,4 +1,4 @@
-import Link from "next/link";
+import { UploadDialog } from "./upload-dialog";
 
 // Shown when there are no books at all — nudges the first upload.
 export function EmptyShelf() {
@@ -8,12 +8,13 @@ export function EmptyShelf() {
       <p className="text-muted-foreground">
         Upload a scanned PDF to turn it into a readable book.
       </p>
-      <Link
-        href="/upload"
-        className="font-medium text-primary underline underline-offset-4"
+      <UploadDialog
+        trigger={
+          <button className="font-medium text-primary underline underline-offset-4" />
+        }
       >
         Upload your first book
-      </Link>
+      </UploadDialog>
     </div>
   );
 }

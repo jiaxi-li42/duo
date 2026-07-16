@@ -3,6 +3,8 @@ import localFont from "next/font/local";
 import Link from "next/link";
 import "./globals.css";
 import { ThemeToggle } from "@/app/theme-toggle";
+import { ScrollArea } from "@/app/scroll-area";
+import { Toaster } from "@/components/ui/sonner";
 
 // Söhne — the app's sans (UI) face. German weight names map to CSS weights.
 const sohne = localFont({
@@ -61,11 +63,9 @@ export default function RootLayout({
       <body className="flex h-full flex-col">
         <script dangerouslySetInnerHTML={{ __html: themeScript }} />
         {/* Full-width bar + backdrop; inner row capped to the same max-w-7xl
-            column as the page content so Duo/toggle align with it. */}
-        {/* overflow-hidden + scrollbar-gutter reserves the same right-side gutter
-            the scrollable <main> does, so both max-w-7xl columns centre on the
-            same width and their edges line up. */}
-        <header className="sticky top-0 z-20 overflow-hidden border-b bg-background/80 backdrop-blur [scrollbar-gutter:stable]">
+            column as the page content so Duo/toggle align with it. The overlay
+            scrollbar takes no layout space, so no gutter juggling needed. */}
+        <header className="sticky top-0 z-20 border-b bg-background/80 backdrop-blur">
           <div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-3">
             <Link href="/" className="font-serif text-2xl">
               Duo
@@ -81,39 +81,43 @@ export default function RootLayout({
             </nav>
           </div>
         </header>
-        <main className="flex min-h-0 flex-1 flex-col overflow-auto py-4 [scrollbar-gutter:stable]">
-          <div className="mx-auto w-full max-w-7xl flex-1 px-4">{children}</div>
-          {/* Hairline inset from the viewport edges instead of full-bleed. */}
-          <div className="mx-4 border-t" />
-          {/* Placeholder links for now (x.com / instagram.com / jess.email). */}
-          <footer className="mx-auto w-full max-w-7xl px-4 py-8 text-sm text-muted-foreground">
-            Made by Jess with love. You can find me on{" "}
-            <a
-              href="https://x.com"
-              target="_blank"
-              rel="noreferrer"
-              className="underline underline-offset-4 hover:text-foreground"
-            >
-              X/Twitter
-            </a>
-            ,{" "}
-            <a
-              href="https://instagram.com"
-              target="_blank"
-              rel="noreferrer"
-              className="underline underline-offset-4 hover:text-foreground"
-            >
-              Instagram
-            </a>{" "}
-            or reach me via{" "}
-            <a
-              href="mailto:contact@jess.email"
-              className="underline underline-offset-4 hover:text-foreground"
-            >
-              contact@jess.email
-            </a>
-          </footer>
-        </main>
+        <ScrollArea className="min-h-0 flex-1">
+          {/* min-h-full keeps the footer pinned to the bottom on short pages. */}
+          <div className="flex min-h-full flex-col py-4">
+            <div className="mx-auto w-full max-w-7xl flex-1 px-4">{children}</div>
+            {/* Hairline inset from the viewport edges instead of full-bleed. */}
+            <div className="mx-4 border-t" />
+            {/* Placeholder links for now (x.com / instagram.com / jess.email). */}
+            <footer className="mx-auto w-full max-w-7xl px-4 py-8 text-sm text-muted-foreground">
+              Made by Jess with love. You can find me on{" "}
+              <a
+                href="https://x.com"
+                target="_blank"
+                rel="noreferrer"
+                className="underline underline-offset-4 hover:text-foreground"
+              >
+                X/Twitter
+              </a>
+              ,{" "}
+              <a
+                href="https://instagram.com"
+                target="_blank"
+                rel="noreferrer"
+                className="underline underline-offset-4 hover:text-foreground"
+              >
+                Instagram
+              </a>{" "}
+              or reach me via{" "}
+              <a
+                href="mailto:contact@jess.email"
+                className="underline underline-offset-4 hover:text-foreground"
+              >
+                contact@jess.email
+              </a>
+            </footer>
+          </div>
+        </ScrollArea>
+        <Toaster />
       </body>
     </html>
   );

@@ -1,11 +1,11 @@
 import { NextResponse } from "next/server";
-import { getBook, createBook } from "@/lib/db";
+import { getBook, createBook, updateBook } from "@/lib/db";
 import { triggerCombine } from "@/lib/convert";
 
 // Create a new bilingual book from a ready EN book + ready ZH book, then kick off
 // the Modal merge job (which fills pages/status in the DB as it aligns chapters).
 export async function POST(request: Request) {
-  const { enId, zhId } = await request.json();
+  const { enId, zhId, title, coverUrl } = await request.json();
   if (!enId || !zhId || enId === zhId) {
     return NextResponse.json(
       { error: "two different book ids (enId, zhId) are required" },
@@ -25,8 +25,31 @@ export async function POST(request: Request) {
   }
 
   const id = crypto.randomUUID();
-  await createBook({ id, title: `${en.title} (中英对照)`, author: en.author });
-  await triggerCombine(id, enId, zhId);
+  const name =
+    (typeof title === "string" && title.trim()) || `${en.title} (Bilingual)`;
+  await createBook({ id, title: name, author: en.author });
+  // Custom cover (a small data URI, like Modal-generated ones); the merge job
+  // only fills cover_url when it's still NULL, so this one sticks.
+  if (
+    typeof coverUrl === "string" &&
+    coverUrl.startsWith("data:image/") &&
+    coverUrl.length < 500_000
+  ) {
+    await updateBook(id, { cover_url: coverUrl });
+  }
+  // Same guard as /api/books: don't strand the new row in "queued" forever.
+  try {
+    await triggerCombine(id, enId, zhId);
+  } catch {
+    await updateBook(id, {
+      status: "error",
+      error: "Merge never started — the converter couldn't be reached.",
+    });
+    return NextResponse.json(
+      { error: "merge failed to start — the book is marked as failed" },
+      { status: 502 },
+    );
+  }
 
   return NextResponse.json({ id });
 }

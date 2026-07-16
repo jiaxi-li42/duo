@@ -11,9 +11,11 @@ export function BookShelf({
 }) {
   return (
     <section className="mt-8">
-      <h2 className="text-2xl">{title}</h2>
+      <h2 className="border-b pb-4 text-2xl">{title}</h2>
       {/* Max 6 per row; steps down on narrower viewports. */}
-      <div className="mt-8 grid grid-cols-2 justify-items-center gap-8 pb-8 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-6">
+      {/* items-end: cover-driven heights vary, so books stand on a common
+          shelf line instead of hanging from the top. */}
+      <div className="mt-12 grid grid-cols-2 items-end justify-items-center gap-8 pb-8 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-6">
         {children}
       </div>
     </section>
